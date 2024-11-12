@@ -1,0 +1,139 @@
+# Модуль управления клавиатурой через программный код
+import keyboard
+# Оффлайн-библиотека для распознавания речи
+import vosk
+# Модуль системных функций
+import sys
+# Модуль для работы с аудиосигналами
+import sounddevice as sd
+# Модуль работы с очередями
+import queue
+# Модуль нечёткого сравнения строк
+from fuzzywuzzy import fuzz
+# Модуль создания графического интерфейса
+from PyQt5.QtWidgets import (QApplication, QLineEdit, QMainWindow, QPushButton, QVBoxLayout, QWidget)
+
+# Основные переменные программы
+model = vosk.Model("models")
+samplerate = 16000 #максимальная частота
+device = 1 #номер микрофона в списке устройств
+q = queue.Queue()
+slowa = []
+slayd = 2
+num = 0
+tochn = 0
+
+
+# Окно записи
+class key_window(QWidget):
+    def __init__(self):  # Структура окна записи
+        super().__init__()
+
+        main = QVBoxLayout()
+
+        self.but1 = QLineEdit('Введите новое ключевое слово и нажмите Enter')  # Строка записи
+        self.but2 = QPushButton('Нажите, если хотите удалить последнее ключевое слово')  # Кнопка удаления
+        self.but3 = QPushButton('Нажмите для завершения')  # Кнопка отображения
+
+        main.addWidget(self.but1)  # Добавление кнопки в окно записи
+        main.addWidget(self.but2)  # Добавление кнопки в окно записи
+        main.addWidget(self.but3)  # Добавление кнопки в окно записи
+
+        self.setLayout(main)  # Добавление макета с кнопками
+
+        self.but1.returnPressed.connect(self.remember)  # Добавление функции записи в список ключей
+        self.but2.clicked.connect(self.forget)  # Добавление функции удаления ключей
+        self.but3.clicked.connect(self.close_window)  # Добавление функции скрытия окна
+
+    def remember(self):  # Метод записи ключей
+        global slowa
+        global slayd
+        slowa.append(self.but1.text())
+        self.but1.setText('Введите новое ключевое слово и нажмите Enter')
+        slayd += 1
+
+    def forget(self):  # Метод удаления ключей
+        global slowa
+        global slayd
+        slowa = slowa[:-1]
+        slayd -= 1
+
+    def close_window(self):  # Метод скрытия окна
+        self.hide()
+
+
+# Основное окно запуска приложения
+class MainWindow(QMainWindow):
+    def __init__(self):  # Структура основного окна
+        super().__init__()
+
+        self.setWindowTitle("Widgets App")
+
+        layout = QVBoxLayout()  # Линия расположения (верт.)
+        start_button = QPushButton('Start', self)  # Кнопка инициализации
+        key_button = QPushButton('Insert key words', self)  # Кнопка установки ключевых слов
+        layout.addWidget(start_button)  # Добавление кнопки в окно
+        layout.addWidget(key_button)  # Добавление кнопки в окно
+
+        widget = QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
+
+        key_button.clicked.connect(self.show_new_window)  # Добавление функции кнопке (отображение окна записи)
+        start_button.clicked.connect(self.script)  # Добавление функции кнопке (запуск скрипта)
+
+    def show_new_window(self):  # Метод отображения окна записи ключей
+        self.key = key_window()
+        self.key.show()
+
+    def script(self):  # Сам скрипт ии
+
+        def callback(indata, frames, time, status):  # Статус ответа
+            if status:
+                print(status, file=sys.stderr)
+            q.put(bytes(indata))
+            # pass
+
+        # Глобализация данных
+        global slowa
+        global slayd
+        global model
+        global samplerate
+        global device
+        global num
+
+        with sd.RawInputStream(samplerate=samplerate, blocksize=8000, device=device, dtype="int16", channels=1,
+                               callback=callback):
+            rec = vosk.KaldiRecognizer(model, samplerate)
+            while True:
+
+                data = q.get()
+                if rec.AcceptWaveform(data):
+                    # print(rec.Result()) # если интересно че он там слышит
+                    cmd = rec.Result().split()
+                    cmd.pop(-1) #очищаем от лишних символов
+                    cmd.pop(0)
+                    cmd.pop(0)
+                    cmd.pop(0)
+                    back = len(cmd) - len(slowa[num].split())
+                    if len(cmd) - len(slowa[num].split()) + 1 == 0:
+                        continue
+                    for i in range(len(cmd) - len(slowa[num].split()) + 1): #поиск фразы
+                        if i == 0:
+                            f = cmd[back:]
+                        else:
+                            f = cmd[back:-i]
+                        back += 1
+                        if fuzz.partial_ratio(slowa[num], " ".join(f)) >= 70:
+                            keyboard.send("right")
+                            num += 1
+                        elif fuzz.partial_ratio("назад", " ".join(cmd)) >= 70:
+                            keyboard.send("left")
+        # pass
+
+
+# Запуск основного окна
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
